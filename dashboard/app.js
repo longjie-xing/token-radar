@@ -147,10 +147,20 @@
     ].map(stepText);
   }
 
+  // Deep links work two ways: the hash (#p=slug, as the page itself writes)
+  // and the query string (?p=slug), so a link keeps working when a tool
+  // strips the fragment. The hash wins when both are present.
   function readHash() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('q')) state.q = params.get('q');
+    if (params.get('p')) state.selected = params.get('p');
+    if (params.get('category')) state.category = params.get('category');
+    if (params.get('chain')) state.chain = params.get('chain');
+    if (params.get('wl') === '1') state.watchlistOnly = true;
+    if (params.get('tab')) state.tab = params.get('tab');
     var hash = window.location.hash.replace(/^#/, '');
     if (!hash) return;
-    var params = new URLSearchParams(hash);
+    params = new URLSearchParams(hash);
     if (params.get('q')) state.q = params.get('q');
     if (params.get('p')) state.selected = params.get('p');
     if (params.get('category')) state.category = params.get('category');
