@@ -17,12 +17,17 @@
 //   growth     = clamp(change_7d, -50, 100) per cent
 //   growthMult = 1 + (growth / 100) x 0.6
 //   maturity   = 0.7 + min(age_days, 1095) / 1095 x 0.5   (age_days unknown: 365)
-//   implied    = max(1, round(tvl_usd x multiple x growthMult x maturity))
+//   breadth    = 1 + min(chains - 1, 8) x 0.015: a launch rewards the users on every chain the
+//                protocol runs on, so a protocol live on more chains reaches more farmers with the
+//                same TVL; capped at 1.12x, and a single-chain protocol earns no breadth at all.
+//   implied    = max(1, round(tvl_usd x multiple x growthMult x maturity x breadth))
 //
 // Age is the time since DefiLlama first listed the protocol: the best record of how long it has run
 // with no token. A protocol that has held billions of TVL for years without issuing a token has a
 // longer runway of unrewarded usage than one listed last month, so maturity lifts its value; a
-// protocol shrinking fast is worth less than its TVL alone suggests. No protocol name is ever
+// protocol shrinking fast is worth less than its TVL alone suggests. Breadth counts the chains the
+// protocol runs on: a launch is a distribution event, and a protocol on eight chains reaches eight
+// user bases where a single-chain one reaches one. No protocol name is ever
 // special-cased: the same function scores every row, and the dashboard recomputes every row from the
 // same figures so the page and the board can never disagree.
 
@@ -61,6 +66,8 @@ export interface ModelConstants {
   multiple_floor: number;
   multiple_cap: number;
   min_category_n: number;
+  breadth_per_chain: number;
+  breadth_cap_chains: number;
 }
 
 export const MODEL: ModelConstants = {
@@ -74,10 +81,12 @@ export const MODEL: ModelConstants = {
   multiple_floor: 0.05,
   multiple_cap: 1.0,
   min_category_n: 3,
+  breadth_per_chain: 0.015,
+  breadth_cap_chains: 8,
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -111,6 +120,7 @@ export interface BoardRow {
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
+    breadth_multiplier: number;
     age_days: number | null;
   };
   farm_steps: string[];
@@ -133,6 +143,7 @@ export interface RadarRow {
   base_multiple: number;
   growth_multiplier: number;
   maturity_multiplier: number;
+  breadth_multiplier: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -250,13 +261,19 @@ export function multipleFor(p: SnapshotProtocol, multiples: { byCategory: Map<st
   return multiples.byCategory.get(p.category ?? 'Other') ?? multiples.global;
 }
 
-/** The three multipliers and the implied value one protocol gets under `model`. */
+/** The breadth multiplier: 1 for a single-chain protocol, up to 1.12x for nine chains or more. */
+export function breadthMultiplier(chains: string[], model: ModelConstants): number {
+  const extra = Math.min(Math.max(chains.length - 1, 0), model.breadth_cap_chains);
+  return round4(1 + extra * model.breadth_per_chain);
+}
+
+/** The four multipliers and the implied value one protocol gets under `model`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
   model: ModelConstants,
   multiples: { byCategory: Map<string, number>; global: number },
-): { implied: number; multiple: number; growthPct: number; growthMult: number; maturityMult: number; age: number | null } {
+): { implied: number; multiple: number; growthPct: number; growthMult: number; maturityMult: number; breadthMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const multiple = multipleFor(protocol, multiples);
   const rawGrowth = finite(protocol.change_7d, 0);
@@ -264,10 +281,12 @@ export function impliedValue(
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+  const breadthMult = breadthMultiplier(protocol.chains, model);
   const base = protocol.tvl_usd * multiple;
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult));
-  return { implied, multiple, growthPct, growthMult, maturityMult, age };
+  const implied = Math.max(1, Math.round(base * growthMult * maturityMult * breadthMult));
+  return { implied, multiple, growthPct, growthMult, maturityMult, breadthMult, age };
 }
+
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
 
@@ -323,8 +342,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   }
 
   const scored = [...chosen.values()].map((p) => {
-    const { implied, multiple, growthPct, growthMult, maturityMult, age } = impliedValue(p, snapshot.as_of, model, multiples);
-    return { p, implied, multiple, growthPct, growthMult, maturityMult, age };
+    const { implied, multiple, growthPct, growthMult, maturityMult, breadthMult, age } = impliedValue(p, snapshot.as_of, model, multiples);
+    return { p, implied, multiple, growthPct, growthMult, maturityMult, breadthMult, age };
   });
   scored.sort((a, b) => b.implied - a.implied || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => ({
@@ -348,6 +367,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
+      breadth_multiplier: round4(s.breadthMult),
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
@@ -408,6 +428,13 @@ function actionFor(p: SnapshotProtocol, capital: number, chain: string): string 
   if (c.includes('index')) return `Buy $${capital} of ${name}'s index on ${chain} and hold it through a rebalance.`;
   if (c.includes('basis')) return `Deposit $${capital} into ${name}'s basis vault on ${chain} and keep the position open for a full funding cycle.`;
   if (c.includes('anchor') || c.includes('btc')) return `Deposit $${capital} of BTC-backed value through ${name} on ${chain} and keep the position open.`;
+  if (c.includes('chain') && !c.includes('cross chain')) return `Bridge $${capital} of USDC to ${name} on ${chain} and use its native apps: one swap on its main DEX and one transaction a week, so the wallet is an active user of the chain itself.`;
+  if (c.includes('otc')) return `Open a $${capital} OTC quote on ${name} and settle one real trade through it, so the wallet is a maker, not a quote request.`;
+  if (c.includes('cedefi')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the position through one full yield cycle.`;
+  if (c.includes('farm')) return `Deposit $${capital} into ${name}'s main farm pool on ${chain} and compound the rewards once instead of claiming them.`;
+  if (c.includes('liquidity manager')) return `Deposit $${capital} into a ${name} managed liquidity vault on ${chain} and keep the position through one rebalance.`;
+  if (c.includes('governance')) return `Deposit $${capital} through ${name} on ${chain} and vote on one live proposal, so the wallet is a participant, not a deposit.`;
+  if (c.includes('card')) return `Load $${capital} onto ${name}'s card on ${chain} and spend it on two real purchases in the month, so the wallet shows card use, not a top-up.`;
   return `Deposit $${capital} of USDC into ${name} on ${chain} and use its main feature once, so the wallet is an active user, not a deposit.`;
 }
 
@@ -424,6 +451,37 @@ function secondActionFor(p: SnapshotProtocol, capital: number, chain: string, se
   return `Use one more of ${name}'s features on ${chain} with $${Math.round(capital / 2)} — a swap, a vote or a second deposit — so the wallet is not a single-action account.`;
 }
 
+/** The weekly action: a different move of the same kind, so the wallet is a repeat user. */
+function weeklyActionFor(p: SnapshotProtocol, capital: number, chain: string): string {
+  const c = (p.category ?? '').toLowerCase();
+  const name = p.name;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Each week, repay a small part of the borrow and re-supply it on ${name}, so the wallet shows steady use of both sides of the market.`;
+  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Each week, add a little to a second pool on ${name} or swap a small amount through its own router, so the volume is counted on the protocol itself.`;
+  if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) return `Each week, close one position on ${name} and open a fresh one, so the wallet shows more than one filled order a month.`;
+  if (c.includes('bridge') || c.includes('cross chain')) return `Each week, bridge a small amount through ${name} instead of one lump transfer, so the wallet shows repeated use.`;
+  if (c.includes('prediction')) return `Each week, settle one market on ${name} and place a position on a new one, so the wallet is not a one-bet account.`;
+  if (c.includes('curator') || c.includes('allocator') || c.includes('risk')) return `Each week, top up the ${name} vault by a little or move part of it to a second vault, so the deposit is not a single event.`;
+  if (c.includes('stable') || c.includes('rwa') || c.includes('basis')) return `Each week, mint or deposit a small amount more through ${name} and keep it, so the balance grows instead of sitting still.`;
+  if (c.includes('liquid staking') || c.includes('restak') || c.includes('staking pool')) return `Each week, stake a small amount more through ${name} and keep the receipt token, so the stake grows week by week.`;
+  if (c.includes('chain') && !c.includes('cross chain')) return `Each week, make one real transaction on ${name} — a swap, a transfer or a contract call — so the wallet is a weekly user of the chain.`;
+  if (c.includes('payment') || c.includes('card')) return `Each week, route one real payment through ${name} instead of batching everything into one transfer.`;
+  if (c.includes('governance')) return `Each week, read the live proposals on ${name} and vote on one, so the wallet is a participant every week.`;
+  return `Each week, make one qualifying action on ${name} — a deposit, a borrow, a swap or a vote — and never let the wallet sit untouched for a whole month.`;
+}
+
+/** The exit: how to leave, by category, so one failed transaction never strands the position. */
+function exitActionFor(p: SnapshotProtocol, capital: number, chain: string): string {
+  const c = (p.category ?? '').toLowerCase();
+  const name = p.name;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Repay the borrow on ${name} first, then withdraw the supply in two parts, so no debt is left behind when the position closes.`;
+  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Remove the liquidity from ${name} in two parts, starting with the smaller pool, and check the slippage on each withdrawal.`;
+  if (c.includes('liquid staking') || c.includes('restak') || c.includes('staking pool')) return `Unstake from ${name} in two parts and wait out the unbonding period on each, so the exit is never rushed into one block.`;
+  if (c.includes('perpetual') || c.includes('derivative') || c.includes('options')) return `Close every open position on ${name} before withdrawing the margin, and withdraw the margin in two parts.`;
+  if (c.includes('bridge') || c.includes('cross chain')) return `Bridge the funds back through ${name} in two parts on different days, so one stuck bridge never strands the whole position.`;
+  if (c.includes('stable') || c.includes('rwa') || c.includes('basis')) return `Redeem the ${name} asset in two parts and confirm each redemption landed before redeeming the rest.`;
+  return `Unstake or withdraw from ${name} in two parts so one failed transaction never strands the whole position.`;
+}
+
 /**
  * A protocol's farm plan: seven steps, each an action with a cost and a time. The plan is derived
  * from the protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
@@ -435,6 +493,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   const secondAction = secondActionFor(p, capital, chain, second);
+  const weekly = weeklyActionFor(p, capital, chain);
+  const holdText =
+    second !== null
+      ? `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot, and keep the ${second} position open too, so both chains stay active. Do not withdraw everything the moment a points page appears.`
+      : `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot, and do not withdraw everything the moment a points page appears.`;
+  const exit = exitActionFor(p, capital, chain);
   return [
     {
       text: `Set up a fresh wallet that holds only the funds you plan to farm, keep its seed phrase offline, and open ${p.name} only from the link its own docs or verified social account publishes.`,
@@ -452,12 +516,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '10 minutes',
     },
     {
-      text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote, and never let the wallet sit untouched for a whole month.`,
+      text: weekly,
       cost: 'about $2 of gas a week',
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot, and do not withdraw everything the moment a points page appears.`,
+      text: holdText,
       cost: `the $${capital} stays in the position`,
       time: `${hold} days`,
     },
@@ -467,7 +531,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '10 minutes',
     },
     {
-      text: `Write the wallet, the dates and every transaction hash in a farm log, then plan the exit: unstake or withdraw in two parts so one failed transaction never strands the whole position.`,
+      text: `Write the wallet, the dates and every transaction hash in a farm log, then plan the exit: ${exit}`,
       cost: 'nothing but the log',
       time: '5 minutes',
     },
@@ -509,6 +573,7 @@ export function radarRow(row: BoardRow): RadarRow {
     base_multiple: row.model.base_multiple,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    breadth_multiplier: row.model.breadth_multiplier,
   };
 }
 
