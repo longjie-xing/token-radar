@@ -40,15 +40,15 @@
     var m = BENCH[row.category || 'Other'];
     return m === undefined ? DATA.global_multiple : m;
   }
-  // radar-2: implied = round(tvl x categoryMultiple x (1 + clamp(7d,-50,100)/100 x 0.6)
-  //          x (0.7 + min(age,1095)/1095 x 0.5)); unknown age counts as 365 days.
+  // radar-3: implied = round(tvl x categoryMultiple x (1 + clamp(7d,-50,100)/100 x 0.6)
+  //          x (0.7 + min(age,1095)/1095 x 0.5) x (1 + min(chains-1,8) x 0.015)); unknown age counts as 365 days.
   function impliedOf(row) {
     var model = DATA.model;
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
     var growthMult = 1 + (growth / 100) * model.growth_weight;
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity));
+    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity * breadthMultOf(row)));
   }
   function growthMultOf(row) {
     var model = DATA.model;
@@ -59,6 +59,12 @@
     var model = DATA.model;
     var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
     return model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+  }
+  function breadthMultOf(row) {
+    var model = DATA.model;
+    var chains = row.chains ? row.chains.length : 0;
+    var extra = Math.min(Math.max(chains - 1, 0), model.breadth_cap_chains);
+    return Math.round((1 + extra * model.breadth_per_chain) * 1e4) / 1e4;
   }
 
   function el(tag, attrs) {
@@ -112,6 +118,13 @@
     if (c.indexOf('index') >= 0) return 'Buy $' + capital + ' of ' + name + "'s index on " + chain + ' and hold it through a rebalance.';
     if (c.indexOf('basis') >= 0) return 'Deposit $' + capital + " into " + name + "'s basis vault on " + chain + ' and keep the position open for a full funding cycle.';
     if (c.indexOf('anchor') >= 0 || c.indexOf('btc') >= 0) return 'Deposit $' + capital + ' of BTC-backed value through ' + name + ' on ' + chain + ' and keep the position open.';
+    if (c.indexOf('chain') >= 0 && c.indexOf('cross chain') < 0) return 'Bridge $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and use its native apps: one swap on its main DEX and one transaction a week, so the wallet is an active user of the chain itself.';
+    if (c.indexOf('otc') >= 0) return 'Open a $' + capital + ' OTC quote on ' + name + ' and settle one real trade through it, so the wallet is a maker, not a quote request.';
+    if (c.indexOf('cedefi') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the position through one full yield cycle.';
+    if (c.indexOf('farm') >= 0) return 'Deposit $' + capital + " into " + name + "'s main farm pool on " + chain + ' and compound the rewards once instead of claiming them.';
+    if (c.indexOf('liquidity manager') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' managed liquidity vault on ' + chain + ' and keep the position through one rebalance.';
+    if (c.indexOf('governance') >= 0) return 'Deposit $' + capital + ' through ' + name + ' on ' + chain + ' and vote on one live proposal, so the wallet is a participant, not a deposit.';
+    if (c.indexOf('card') >= 0) return 'Load $' + capital + " onto " + name + "'s card on " + chain + ' and spend it on two real purchases in the month, so the wallet shows card use, not a top-up.';
     return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and use its main feature once, so the wallet is an active user, not a deposit.';
   }
   function secondActionFor(p, capital, chain, second) {
@@ -131,19 +144,51 @@
     if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
     return s;
   }
+  function weeklyActionFor(p, capital, chain) {
+    var c = (p.category || '').toLowerCase();
+    var name = p.name;
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Each week, repay a small part of the borrow and re-supply it on ' + name + ', so the wallet shows steady use of both sides of the market.';
+    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Each week, add a little to a second pool on ' + name + ' or swap a small amount through its own router, so the volume is counted on the protocol itself.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) return 'Each week, close one position on ' + name + ' and open a fresh one, so the wallet shows more than one filled order a month.';
+    if (c.indexOf('bridge') >= 0 || c.indexOf('cross chain') >= 0) return 'Each week, bridge a small amount through ' + name + ' instead of one lump transfer, so the wallet shows repeated use.';
+    if (c.indexOf('prediction') >= 0) return 'Each week, settle one market on ' + name + ' and place a position on a new one, so the wallet is not a one-bet account.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0 || c.indexOf('risk') >= 0) return 'Each week, top up the ' + name + ' vault by a little or move part of it to a second vault, so the deposit is not a single event.';
+    if (c.indexOf('stable') >= 0 || c.indexOf('rwa') >= 0 || c.indexOf('basis') >= 0) return 'Each week, mint or deposit a small amount more through ' + name + ' and keep it, so the balance grows instead of sitting still.';
+    if (c.indexOf('liquid staking') >= 0 || c.indexOf('restak') >= 0 || c.indexOf('staking pool') >= 0) return 'Each week, stake a small amount more through ' + name + ' and keep the receipt token, so the stake grows week by week.';
+    if (c.indexOf('chain') >= 0 && c.indexOf('cross chain') < 0) return 'Each week, make one real transaction on ' + name + ' — a swap, a transfer or a contract call — so the wallet is a weekly user of the chain.';
+    if (c.indexOf('payment') >= 0 || c.indexOf('card') >= 0) return 'Each week, route one real payment through ' + name + ' instead of batching everything into one transfer.';
+    if (c.indexOf('governance') >= 0) return 'Each week, read the live proposals on ' + name + ' and vote on one, so the wallet is a participant every week.';
+    return 'Each week, make one qualifying action on ' + name + ' — a deposit, a borrow, a swap or a vote — and never let the wallet sit untouched for a whole month.';
+  }
+  function exitActionFor(p, capital, chain) {
+    var c = (p.category || '').toLowerCase();
+    var name = p.name;
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Repay the borrow on ' + name + ' first, then withdraw the supply in two parts, so no debt is left behind when the position closes.';
+    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Remove the liquidity from ' + name + ' in two parts, starting with the smaller pool, and check the slippage on each withdrawal.';
+    if (c.indexOf('liquid staking') >= 0 || c.indexOf('restak') >= 0 || c.indexOf('staking pool') >= 0) return 'Unstake from ' + name + ' in two parts and wait out the unbonding period on each, so the exit is never rushed into one block.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('options') >= 0) return 'Close every open position on ' + name + ' before withdrawing the margin, and withdraw the margin in two parts.';
+    if (c.indexOf('bridge') >= 0 || c.indexOf('cross chain') >= 0) return 'Bridge the funds back through ' + name + ' in two parts on different days, so one stuck bridge never strands the whole position.';
+    if (c.indexOf('stable') >= 0 || c.indexOf('rwa') >= 0 || c.indexOf('basis') >= 0) return 'Redeem the ' + name + ' asset in two parts and confirm each redemption landed before redeeming the rest.';
+    return 'Unstake or withdraw from ' + name + ' in two parts so one failed transaction never strands the whole position.';
+  }
   function farmSteps(p) {
     var chain = chainOf(p);
     var second = p.chains && p.chains.length > 1 ? p.chains[1] : null;
     var capital = capitalFor(p);
     var hold = holdDaysFor(p.age_days);
+    var weekly = weeklyActionFor(p, capital, chain);
+    var holdText = second !== null
+      ? 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot, and keep the ' + second + ' position open too, so both chains stay active. Do not withdraw everything the moment a points page appears.'
+      : 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot, and do not withdraw everything the moment a points page appears.';
+    var exit = exitActionFor(p, capital, chain);
     return [
       { text: 'Set up a fresh wallet that holds only the funds you plan to farm, keep its seed phrase offline, and open ' + p.name + ' only from the link its own docs or verified social account publishes.', cost: 'under $3 of gas for the first transaction', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
       { text: secondActionFor(p, capital, chain, second), cost: 'about $' + (capital >= 150 ? 6 : 3) + ' of gas', time: '10 minutes' },
-      { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote, and never let the wallet sit untouched for a whole month.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
-      { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot, and do not withdraw everything the moment a points page appears.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
+      { text: weekly, cost: 'about $2 of gas a week', time: '10 minutes a week' },
+      { text: holdText, cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
       { text: "Before you claim anything, open " + p.name + "'s own points or rewards page from its official link and claim only there; a token that asks you to pay to claim it is a scam.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-      { text: 'Write the wallet, the dates and every transaction hash in a farm log, then plan the exit: unstake or withdraw in two parts so one failed transaction never strands the whole position.', cost: 'nothing but the log', time: '5 minutes' }
+      { text: 'Write the wallet, the dates and every transaction hash in a farm log, then plan the exit: ' + exit, cost: 'nothing but the log', time: '5 minutes' }
     ].map(stepText);
   }
 
@@ -386,9 +431,9 @@
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        'implied = round( tvl_usd x categoryMultiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') )'
+        'implied = round( tvl_usd x categoryMultiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, ' + m.breadth_cap_chains + ') x ' + m.breadth_per_chain + ') )'
       ),
-      el('p', { class: 'sub', text: 'The category multiple is the median market-cap-to-TVL ratio of the live-token protocols in that category (at least ' + m.min_category_n + ' of them), clamped to ' + m.multiple_floor + '–' + m.multiple_cap + '; a thin category falls back to the global median of ' + DATA.global_multiple.toFixed(3) + 'x. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days.' }),
+      el('p', { class: 'sub', text: 'The category multiple is the median market-cap-to-TVL ratio of the live-token protocols in that category (at least ' + m.min_category_n + ' of them), clamped to ' + m.multiple_floor + '–' + m.multiple_cap + '; a thin category falls back to the global median of ' + DATA.global_multiple.toFixed(3) + 'x. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Breadth is the chain count: a launch rewards the users on every chain the protocol runs on, so each extra chain up to ' + m.breadth_cap_chains + ' adds ' + (m.breadth_per_chain * 100) + '% (at most 12% in all); a single-chain protocol earns none.' }),
       el('table', { class: 'bench' },
         el('caption', { class: 'sub', text: 'Category benchmarks, computed from this snapshot\'s live tokens' }),
         el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Category' }), el('th', { scope: 'col', class: 'num', text: 'Live tokens' }), el('th', { scope: 'col', class: 'num', text: 'Multiple' }))),
@@ -415,11 +460,12 @@
     dialog.textContent = '';
     var steps = farmSteps(row);
     var recomputed = impliedOf(row);
+    var chainList = row.chains && row.chains.length ? (row.chains.length > 4 ? row.chains.slice(0, 4).join(', ') + ' and ' + (row.chains.length - 4) + ' more' : row.chains.join(', ')) : 'an unnamed chain';
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
         el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + (row.watchlist ? ' · Watchlist' : ' · Early radar') }),
         el('h2', { id: 'detail-title', text: row.name }),
-        el('p', { class: 'sub', text: (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain') })
+        el('p', { class: 'sub', text: (row.category || 'Other') + ' on ' + chainList })
       ),
       el('button', { class: 'close', type: 'button', 'aria-label': 'Close details', text: 'Close', onclick: function () { dialog.close(); } })
     ));
@@ -432,6 +478,8 @@
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: growthMultOf(row).toFixed(4) })),
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: maturityMultOf(row).toFixed(4) })),
+        el('div', null, el('span', { text: 'Chains live' }), el('b', { class: 'num', text: String(row.chains ? row.chains.length : 0) })),
+        el('div', null, el('span', { text: 'Breadth multiplier' }), el('b', { class: 'num', text: breadthMultOf(row).toFixed(4) })),
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the page recomputes this row as ' + fmtUsd(recomputed) + (recomputed === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
@@ -442,7 +490,7 @@
         var at = s.indexOf(' Cost: ');
         var action = at >= 0 ? s.slice(0, at) : s;
         var tail = at >= 0 ? s.slice(at + 1) : '';
-        return el('li', null, el('b', { text: action }), el('span', { class: 'cost', text: tail }));
+        return el('li', null, el('b', { text: action }), el('span', { class: 'cost', text: ' — ' + tail }));
       })),
       el('p', { class: 'note', text: 'Risk: a token may never launch, and a launch may reward nothing. Only farm with funds you can afford to lock for the hold period, and never connect a wallet holding funds you cannot lose.' })
     ));

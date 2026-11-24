@@ -142,27 +142,28 @@ dialog.detail {
 dialog.detail::backdrop { background: rgba(4, 8, 18, .72); }
 .detail-head {
   display: flex; justify-content: space-between; gap: 14px; align-items: start;
-  padding: 18px 20px 0;
+  padding: 14px 20px 0;
 }
-.detail-head h2 { margin: 4px 0 2px; font-size: 24px; }
+.detail-head h2 { margin: 4px 0 2px; font-size: 22px; }
 .detail-head .sub { font-size: 13.5px; }
 .close {
   background: var(--bg-soft); color: var(--ink); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; flex: none;
 }
-.detail-section { padding: 16px 20px 20px; border-top: 1px solid var(--line); margin-top: 16px; }
-.detail-section:first-of-type { margin-top: 14px; }
-.detail-section h3 { margin: 0 0 10px; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-.equation { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; }
-.equation div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--line); padding-bottom: 6px; }
-.equation span { color: var(--muted); font-size: 13.5px; }
+.detail-section { padding: 12px 20px 14px; border-top: 1px solid var(--line); margin-top: 12px; }
+.detail-section:first-of-type { margin-top: 10px; }
+.detail-section h3 { margin: 0 0 8px; font-size: 13.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.detail-section .sub { font-size: 13px; }
+.equation { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; }
+.equation div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--line); padding-bottom: 4px; }
+.equation span { color: var(--muted); font-size: 13px; }
 .equation b { font-variant-numeric: tabular-nums; }
 .equation .total { grid-column: 1 / -1; }
-.equation .total b { color: var(--amber-soft); font-size: 17px; }
+.equation .total b { color: var(--amber-soft); font-size: 16px; }
 .steps { margin: 0; padding-left: 20px; }
-.steps li { margin-bottom: 12px; }
-.steps li b { display: block; font-weight: 600; }
-.steps .cost { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.steps li { margin-bottom: 7px; line-height: 1.45; }
+.steps li b { font-weight: 600; font-size: 14px; }
+.steps .cost { color: var(--muted); font-size: 12.5px; }
 .note {
   margin-top: 14px; padding: 10px 12px; border: 1px solid #f5a52455; background: #f5a52412;
   border-radius: 8px; color: var(--amber-soft); font-size: 13px;
